@@ -1,9 +1,11 @@
 package com.pingyu.tracehub.infrastructure.api;
 
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.util.StrUtil;
 import com.qcloud.cos.COSClient;
 import com.qcloud.cos.model.COSObject;
 import com.qcloud.cos.model.GetObjectRequest;
+import com.qcloud.cos.model.ObjectMetadata;
 import com.qcloud.cos.model.PutObjectRequest;
 import com.qcloud.cos.model.PutObjectResult;
 import com.qcloud.cos.model.ciModel.persistence.PicOperations;
@@ -33,6 +35,12 @@ public class CosManager {
     public PutObjectResult putObject(String key, File file) {
         PutObjectRequest putObjectRequest = new PutObjectRequest(cosClientConfig.getBucket(), key,
                 file);
+
+        // 【关键修复】手动设置 Content-Type，解决浏览器直接访问链接强制下载的问题
+        ObjectMetadata objectMetadata = new ObjectMetadata();
+        setContentType(key, objectMetadata);
+        putObjectRequest.setMetadata(objectMetadata);
+
         return cosClient.putObject(putObjectRequest);
     }
 
@@ -55,6 +63,12 @@ public class CosManager {
     public PutObjectResult putPictureObject(String key, File file) {
         PutObjectRequest putObjectRequest = new PutObjectRequest(cosClientConfig.getBucket(), key,
                 file);
+
+        // 【关键修复】同样为图片上传设置 Content-Type
+        ObjectMetadata objectMetadata = new ObjectMetadata();
+        setContentType(key, objectMetadata);
+        putObjectRequest.setMetadata(objectMetadata);
+
         // 对图片进行处理（获取基本信息也被视作为一种图片的处理）
         PicOperations picOperations = new PicOperations();
         // 1 表示返回原图信息
@@ -92,5 +106,43 @@ public class CosManager {
      */
     public void deleteObject(String key) {
         cosClient.deleteObject(cosClientConfig.getBucket(), key);
+    }
+
+    /**
+     * 辅助方法：根据文件名后缀设置 Content-Type
+     *
+     * @param key            文件名 key
+     * @param objectMetadata COS 元数据对象
+     */
+    private void setContentType(String key, ObjectMetadata objectMetadata) {
+        String suffix = FileUtil.getSuffix(key);
+        if (StrUtil.isBlank(suffix)) {
+            return;
+        }
+        switch (suffix.toLowerCase()) {
+            case "jpg":
+            case "jpeg":
+                objectMetadata.setContentType("image/jpeg");
+                break;
+            case "png":
+                objectMetadata.setContentType("image/png");
+                break;
+            case "webp":
+                objectMetadata.setContentType("image/webp");
+                break;
+            case "gif":
+                objectMetadata.setContentType("image/gif");
+                break;
+            case "bmp":
+                objectMetadata.setContentType("image/bmp");
+                break;
+            case "svg":
+                objectMetadata.setContentType("image/svg+xml");
+                break;
+            default:
+                // 默认流类型，通常会导致下载
+                objectMetadata.setContentType("application/octet-stream");
+                break;
+        }
     }
 }
