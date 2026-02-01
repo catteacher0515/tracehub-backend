@@ -119,21 +119,44 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
         String content = postQueryRequest.getContent();
         List<String> tags = postQueryRequest.getTags();
         Long userId = postQueryRequest.getUserId();
-        Integer reviewStatus = postQueryRequest.getReviewStatus();
-
+        
+        // 1. 基础查询
         queryWrapper.like(StringUtils.isNotBlank(title), "title", title);
         queryWrapper.like(StringUtils.isNotBlank(content), "content", content);
-        queryWrapper.like(StringUtils.isNotBlank(searchText), "title", searchText).or().like(StringUtils.isNotBlank(searchText), "content", searchText);
         queryWrapper.eq(id != null, "id", id);
         queryWrapper.eq(userId != null, "userId", userId);
-        queryWrapper.eq(reviewStatus != null, "reviewStatus", reviewStatus);
         
+        // 2. 广场核心：搜索词 (标题 OR 内容)
+        if (StringUtils.isNotBlank(searchText)) {
+            queryWrapper.and(qw -> qw.like("title", searchText).or().like("content", searchText));
+        }
+        
+        // 3. 标签精准匹配 (JSON 数组)
         if (CollUtil.isNotEmpty(tags)) {
             for (String tag : tags) {
                 queryWrapper.like("tags", "\"" + tag + "\"");
             }
         }
-        queryWrapper.orderBy(StringUtils.isNotBlank(sortField), sortOrder.equals("ascend"), sortField);
+        
+        // 4. 广场安全过滤：只看审核通过的 (reviewStatus == 1)
+        Integer reviewStatus = postQueryRequest.getReviewStatus();
+        if (reviewStatus != null) {
+            queryWrapper.eq("reviewStatus", reviewStatus);
+        } else if (userId == null) {
+            // 如果没有指定查谁的（说明是广场），默认只查审核通过的
+            queryWrapper.eq("reviewStatus", 1);
+        }
+
+        // 必须过滤逻辑删除
+        queryWrapper.eq("isDelete", 0);
+        
+        // 5. 排序
+        // 默认按创建时间倒序
+        queryWrapper.orderBy(StringUtils.isNotBlank(sortField), "ascend".equals(sortOrder), sortField);
+        if (StringUtils.isBlank(sortField)) {
+            queryWrapper.orderByDesc("createTime");
+        }
+        
         return queryWrapper;
     }
 
