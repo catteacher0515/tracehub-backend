@@ -1,5 +1,6 @@
 package com.pingyu.tracehub.interfaces.vo.post;
 
+import com.pingyu.tracehub.interfaces.vo.user.UserVO;
 import lombok.Data;
 import java.io.Serializable;
 import java.util.Date;
@@ -23,6 +24,11 @@ public class PostVO implements Serializable {
     private Date createTime;
     private Date updateTime;
     
+    /**
+     * 创建人信息
+     */
+    private UserVO user;
+
     /**
      * 是否点赞
      */

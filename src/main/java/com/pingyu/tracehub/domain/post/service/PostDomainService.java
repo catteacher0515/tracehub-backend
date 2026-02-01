@@ -27,6 +27,15 @@ public interface PostDomainService extends IService<Post> {
     long addPost(PostAddRequest postAddRequest, User loginUser);
 
     /**
+     * 根据 id 获取帖子 VO
+     *
+     * @param id
+     * @param loginUser
+     * @return
+     */
+    PostVO getPostVOById(long id, User loginUser);
+
+    /**
      * 分页查询帖子 VO
      *
      * @param postQueryRequest

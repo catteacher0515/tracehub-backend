@@ -11,10 +11,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pingyu.tracehub.interfaces.dto.post.PostAddRequest;
 import com.pingyu.tracehub.interfaces.dto.post.PostQueryRequest;
 import com.pingyu.tracehub.interfaces.vo.post.PostVO;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
@@ -67,6 +64,23 @@ public class PostController {
             throw new BusinessException(ErrorCode.OPERATION_ERROR);
         }
         return ResultUtils.success(true);
+    }
+
+    /**
+     * 根据 id 获取帖子（封装类）
+     *
+     * @param id
+     * @param request
+     * @return
+     */
+    @GetMapping("/get/vo")
+    public BaseResponse<PostVO> getPostVOById(long id, HttpServletRequest request) {
+        if (id <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        User loginUser = userApplicationService.getLoginUser(request);
+        PostVO postVO = postDomainService.getPostVOById(id, loginUser);
+        return ResultUtils.success(postVO);
     }
 
     /**
