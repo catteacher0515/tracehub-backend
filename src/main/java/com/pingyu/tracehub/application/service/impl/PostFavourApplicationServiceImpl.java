@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+
 import javax.annotation.Resource;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -69,7 +71,12 @@ public class PostFavourApplicationServiceImpl extends ServiceImpl<PostFavourMapp
         if (oldPostFavour != null) {
             boolean result = this.removeById(oldPostFavour.getId());
             if (result) {
-                return -1;
+                // 收藏数 - 1
+                result = postDomainService.update(new UpdateWrapper<Post>()
+                        .eq("id", postId)
+                        .gt("favourNum", 0)
+                        .setSql("favourNum = favourNum - 1"));
+                return result ? -1 : 0;
             } else {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR);
             }
@@ -80,7 +87,11 @@ public class PostFavourApplicationServiceImpl extends ServiceImpl<PostFavourMapp
             postFavour.setUserId(userId);
             boolean result = this.save(postFavour);
             if (result) {
-                return 1;
+                // 收藏数 + 1
+                result = postDomainService.update(new UpdateWrapper<Post>()
+                        .eq("id", postId)
+                        .setSql("favourNum = favourNum + 1"));
+                return result ? 1 : 0;
             } else {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR);
             }

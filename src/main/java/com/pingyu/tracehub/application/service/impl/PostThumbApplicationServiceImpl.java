@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+
 import javax.annotation.Resource;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -61,7 +63,12 @@ public class PostThumbApplicationServiceImpl extends ServiceImpl<PostThumbMapper
         if (oldPostThumb != null) {
             boolean result = this.removeById(oldPostThumb.getId());
             if (result) {
-                return -1;
+                // 点赞数 - 1
+                result = postDomainService.update(new UpdateWrapper<Post>()
+                        .eq("id", postId)
+                        .gt("thumbNum", 0)
+                        .setSql("thumbNum = thumbNum - 1"));
+                return result ? -1 : 0;
             } else {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR);
             }
@@ -72,7 +79,11 @@ public class PostThumbApplicationServiceImpl extends ServiceImpl<PostThumbMapper
             postThumb.setUserId(userId);
             boolean result = this.save(postThumb);
             if (result) {
-                return 1;
+                // 点赞数 + 1
+                result = postDomainService.update(new UpdateWrapper<Post>()
+                        .eq("id", postId)
+                        .setSql("thumbNum = thumbNum + 1"));
+                return result ? 1 : 0;
             } else {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR);
             }
