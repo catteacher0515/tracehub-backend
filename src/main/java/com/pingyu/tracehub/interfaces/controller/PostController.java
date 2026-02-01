@@ -7,7 +7,10 @@ import com.pingyu.tracehub.infrastructure.common.BaseResponse;
 import com.pingyu.tracehub.infrastructure.common.ResultUtils;
 import com.pingyu.tracehub.infrastructure.exception.BusinessException;
 import com.pingyu.tracehub.infrastructure.exception.ErrorCode;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pingyu.tracehub.interfaces.dto.post.PostAddRequest;
+import com.pingyu.tracehub.interfaces.dto.post.PostQueryRequest;
+import com.pingyu.tracehub.interfaces.vo.post.PostVO;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -44,5 +47,76 @@ public class PostController {
         User loginUser = userApplicationService.getLoginUser(request);
         long newPostId = postDomainService.addPost(postAddRequest, loginUser);
         return ResultUtils.success(newPostId);
+    }
+
+    /**
+     * 删除帖子
+     *
+     * @param idRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/delete")
+    public BaseResponse<Boolean> deletePost(@RequestBody PostQueryRequest idRequest, HttpServletRequest request) {
+        if (idRequest == null || idRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        User loginUser = userApplicationService.getLoginUser(request);
+        boolean result = postDomainService.deletePost(idRequest.getId(), loginUser);
+        if (!result) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR);
+        }
+        return ResultUtils.success(true);
+    }
+
+    /**
+     * 分页获取列表（封装类）
+     *
+     * @param postQueryRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/list/page/vo")
+    public BaseResponse<Page<PostVO>> listPostVOByPage(@RequestBody PostQueryRequest postQueryRequest,
+                                                       HttpServletRequest request) {
+        if (postQueryRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        long current = postQueryRequest.getCurrent();
+        long size = postQueryRequest.getPageSize();
+        // 限制爬虫
+        if (size > 20) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        // 默认只查已审核通过的
+        postQueryRequest.setReviewStatus(1);
+        User loginUser = userApplicationService.getLoginUser(request);
+        Page<PostVO> postVOPage = postDomainService.listPostVOByPage(postQueryRequest, loginUser);
+        return ResultUtils.success(postVOPage);
+    }
+
+    /**
+     * 分页获取当前用户创建的资源列表
+     *
+     * @param postQueryRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/my/list/page/vo")
+    public BaseResponse<Page<PostVO>> listMyPostVOByPage(@RequestBody PostQueryRequest postQueryRequest,
+                                                         HttpServletRequest request) {
+        if (postQueryRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        User loginUser = userApplicationService.getLoginUser(request);
+        postQueryRequest.setUserId(loginUser.getId());
+        long current = postQueryRequest.getCurrent();
+        long size = postQueryRequest.getPageSize();
+        // 限制爬虫
+        if (size > 20) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        Page<PostVO> postVOPage = postDomainService.listPostVOByPage(postQueryRequest, loginUser);
+        return ResultUtils.success(postVOPage);
     }
 }
