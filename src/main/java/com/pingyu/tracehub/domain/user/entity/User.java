@@ -43,11 +43,13 @@ public class User implements Serializable {
     /**
      * 用户头像
      */
+    @TableField(value = "user_avatar")
     private String userAvatar;
 
     /**
      * 用户简介
      */
+    @TableField(value = "user_profile")
     private String userProfile;
 
     /**
@@ -87,6 +89,7 @@ public class User implements Serializable {
      * @param checkPassword
      */
     public static void validUserRegister(String userAccount, String userPassword, String checkPassword) {
+
         // 1. 校验参数
         if (StrUtil.hasBlank(userAccount, userPassword, checkPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
