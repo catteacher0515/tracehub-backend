@@ -43,13 +43,11 @@ public class User implements Serializable {
     /**
      * 用户头像
      */
-    @TableField(value = "user_avatar")
     private String userAvatar;
 
     /**
      * 用户简介
      */
-    @TableField(value = "user_profile")
     private String userProfile;
 
     /**
