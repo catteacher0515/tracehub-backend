@@ -17,12 +17,14 @@ import com.pingyu.tracehub.domain.user.entity.User;
 import com.pingyu.tracehub.domain.user.valueobject.UserRoleEnum;
 import com.pingyu.tracehub.infrastructure.exception.BusinessException;
 import com.pingyu.tracehub.infrastructure.exception.ErrorCode;
+import com.pingyu.tracehub.infrastructure.manager.AiManager;
 import com.pingyu.tracehub.infrastructure.mapper.PostFavourMapper;
 import com.pingyu.tracehub.infrastructure.mapper.PostMapper;
 import com.pingyu.tracehub.infrastructure.mapper.PostThumbMapper;
 import com.pingyu.tracehub.interfaces.dto.post.PostAddRequest;
 import com.pingyu.tracehub.interfaces.dto.post.PostQueryRequest;
 import com.pingyu.tracehub.interfaces.vo.post.PostVO;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
@@ -34,6 +36,7 @@ import org.springframework.util.StopWatch;
 import javax.annotation.Resource;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -55,6 +58,9 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private AiManager aiManager;
 
     // -------------------------------------------------------------
     // 【L1 缓存】Caffeine 本地缓存定义
@@ -93,7 +99,7 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
         post.setFavourNum(0);
         post.setThumbNum(0);
         post.setViewNum(0);
-        post.setReviewStatus(1); // 默认通过，实际业务可改为 0 待审核
+        post.setReviewStatus(0); // 默认待审核
         post.setIsDelete(0);
 
         // 5. 保存
@@ -101,7 +107,80 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
         if (!result) {
             throw new BusinessException(ErrorCode.OPERATION_ERROR);
         }
+
+        // 【日志埋点】主流程结束，记录帖子 ID
+        log.info("帖子创建成功，初始状态: 0 (待审核), postId: {}", post.getId());
+
+        // 6. 异步调用 AI 进行审核
+        CompletableFuture.runAsync(() -> {
+            // 【日志埋点】异步任务开始
+            log.info("[Async] 开始 AI 审核，postId: {}", post.getId());
+            try {
+                // 构造 Prompt
+                String systemMessage = "你是一个严谨的社区内容风控专家。请对用户输入的内容进行安全检测和信息增强。\n" +
+                        "严格按照以下 JSON 格式返回结果，不要包含任何多余的 Markdown 标记或解释：\n" +
+                        "{\n" +
+                        "    \"isSafe\": boolean, // 是否安全（不包含涉黄、涉政、暴力、辱骂等）\n" +
+                        "    \"reason\": \"string\", // 审核结果说明\n" +
+                        "    \"summary\": \"string\", // 50字以内的精简摘要\n" +
+                        "    \"tags\": [\"string\", \"string\"] // 3-5个相关的技术或内容标签\n" +
+                        "}";
+                String userMessage = "标题：" + title + "\n内容：" + content;
+
+                // 调用 AI
+                String aiResult = aiManager.doChat(systemMessage, userMessage);
+
+                // 【日志埋点】AI 原始响应
+                log.info("[AI Response] postId: {}, Result: {}", post.getId(), aiResult);
+
+                // 清洗 AI 结果 (去掉可能的 Markdown 代码块标记)
+                String jsonStr = aiResult;
+                int start = jsonStr.indexOf("{");
+                int end = jsonStr.lastIndexOf("}");
+                if (start != -1 && end != -1) {
+                    jsonStr = jsonStr.substring(start, end + 1);
+                }
+
+                // 解析 JSON
+                AiAuditResult auditResult = JSONUtil.toBean(jsonStr, AiAuditResult.class);
+
+                // 更新数据库
+                Post updatePost = new Post();
+                updatePost.setId(post.getId());
+                if (auditResult.getIsSafe()) {
+                    updatePost.setReviewStatus(1); // 通过
+                    // 补充标签 (如果用户没填，或者做增强)
+                    if (CollUtil.isNotEmpty(auditResult.getTags())) {
+                        updatePost.setTags(JSONUtil.toJsonStr(auditResult.getTags()));
+                    }
+
+                    log.info("[Async] AI 审核通过，已更新数据库, postId: {}", post.getId());
+                    // 注意：这里我们暂不更新 content，摘要也暂无字段存储
+                } else {
+                    updatePost.setReviewStatus(2); // 拒绝
+                    updatePost.setReviewMessage(auditResult.getReason());
+                    log.info("[Async] AI 审核拒绝，原因: {}, postId: {}", auditResult.getReason(), post.getId());
+                }
+                boolean updateResult = this.updateById(updatePost);
+                if (!updateResult) {
+                    log.error("AI 审核完成后更新数据库失败, postId={}", post.getId());
+                }
+
+            } catch (Exception e) {
+                log.error("AI 审核异步任务执行失败, postId=" + post.getId(), e);
+                // 也可以在这里将 reviewStatus 设为 2 或人工审核状态
+            }
+        });
+
         return post.getId();
+    }
+
+    @Data
+    private static class AiAuditResult {
+        private Boolean isSafe;
+        private String reason;
+        private String summary;
+        private List<String> tags;
     }
 
     @Override

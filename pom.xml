@@ -123,6 +123,12 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- 阿里云 AI -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>dashscope-sdk-java</artifactId>
+            <version>2.18.1</version>
+        </dependency>
     </dependencies>
     <dependencyManagement>
         <dependencies>
