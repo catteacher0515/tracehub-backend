@@ -2,6 +2,7 @@ package com.pingyu.tracehub.application.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.pingyu.tracehub.domain.user.constant.UserConstant;
 import com.pingyu.tracehub.domain.user.service.UserDomainService;
 import com.pingyu.tracehub.infrastructure.common.DeleteRequest;
 import com.pingyu.tracehub.infrastructure.exception.BusinessException;
@@ -11,10 +12,12 @@ import com.pingyu.tracehub.interfaces.dto.user.UserLoginRequest;
 import com.pingyu.tracehub.interfaces.dto.user.UserQueryRequest;
 import com.pingyu.tracehub.domain.user.entity.User;
 import com.pingyu.tracehub.interfaces.dto.user.UserRegisterRequest;
+import com.pingyu.tracehub.interfaces.dto.user.UserUpdateMyRequest;
 import com.pingyu.tracehub.interfaces.vo.user.LoginUserVO;
 import com.pingyu.tracehub.interfaces.vo.user.UserVO;
 import com.pingyu.tracehub.application.service.UserApplicationService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -147,6 +150,31 @@ public class UserApplicationServiceImpl implements UserApplicationService {
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
     }
 
+    @Override
+    public void updateMyUser(UserUpdateMyRequest userUpdateMyRequest, HttpServletRequest request) {
+        // 1. 判断是否登录
+        User loginUser = getLoginUser(request);
+
+        // 2. 更新用户信息到数据库
+        User user = new User();
+        user.setId(loginUser.getId());
+        BeanUtils.copyProperties(userUpdateMyRequest, user);
+
+        boolean result = userDomainService.updateById(user);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+
+        // ---------------------------------------------------------
+        // 【关键修复】3. 数据库更新成功后，必须同步刷新 Session！
+        // ---------------------------------------------------------
+
+        // 3.1 从数据库查出最新的用户信息（确保数据一致）
+        User latestUser = userDomainService.getById(loginUser.getId());
+
+        // 3.2 覆盖 Session 中的旧用户信息
+        // 注意：这里需要引入 UserConstant，或者直接使用你项目中定义的字符串常量 "user_login"
+        // 假设你的 UserConstant.USER_LOGIN_STATE 就是存 session 的 key
+        request.getSession().setAttribute(UserConstant.USER_LOGIN_STATE, latestUser);
+    }
     @Override
     public Page<UserVO> listUserVOByPage(UserQueryRequest userQueryRequest) {
         ThrowUtils.throwIf(userQueryRequest == null, ErrorCode.PARAMS_ERROR);

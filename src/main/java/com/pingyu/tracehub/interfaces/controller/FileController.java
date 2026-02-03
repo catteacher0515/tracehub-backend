@@ -1,5 +1,6 @@
 package com.pingyu.tracehub.interfaces.controller;
 
+import com.pingyu.tracehub.infrastructure.config.CosClientConfig;
 import com.qcloud.cos.model.COSObject;
 import com.qcloud.cos.model.COSObjectInputStream;
 import com.qcloud.cos.utils.IOUtils;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.IOException;
@@ -26,6 +28,58 @@ public class FileController {
 
     @Resource
     private CosManager cosManager;
+
+    // 引入 CosClientConfig 以获取配置信息
+    @Resource
+    private CosClientConfig cosClientConfig;
+
+    /**
+     * 文件上传
+     *
+     * @param multipartFile
+     * @param request
+     * @return
+     */
+    @PostMapping("/upload")
+    @AuthCheck
+    public BaseResponse<String> uploadFile(@RequestPart("file") MultipartFile multipartFile, HttpServletRequest request) {
+        // 文件目录
+        String filename = multipartFile.getOriginalFilename();
+        // 随机生成文件名
+        String uuid = java.util.UUID.randomUUID().toString();
+        String filepath = String.format("/%s/%s", uuid, filename);
+        File file = null;
+        try {
+            // 上传文件
+            file = File.createTempFile(filepath, null);
+            multipartFile.transferTo(file);
+            cosManager.putObject(filepath, file);
+
+            // ---------------------------------------------------------
+            // 【新增修改 2】拼接完整的网络可访问 URL
+            // ---------------------------------------------------------
+            // 格式：https://{bucket}.cos.{region}.myqcloud.com{filepath}
+            String fileUrl = String.format("https://%s.cos.%s.myqcloud.com%s",
+                    cosClientConfig.getBucket(),
+                    cosClientConfig.getRegion(),
+                    filepath);
+
+            // 返回完整的 URL，而不是相对路径
+            return ResultUtils.success(fileUrl);
+
+        } catch (Exception e) {
+            log.error("file upload error, filepath = " + filepath, e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "上传失败");
+        } finally {
+            if (file != null) {
+                // 删除临时文件
+                boolean delete = file.delete();
+                if (!delete) {
+                    log.error("file delete error, filepath = {}", filepath);
+                }
+            }
+        }
+    }
 
     /**
      * 测试文件上传

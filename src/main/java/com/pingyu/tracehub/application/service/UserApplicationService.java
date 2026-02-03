@@ -7,6 +7,7 @@ import com.pingyu.tracehub.interfaces.dto.user.UserLoginRequest;
 import com.pingyu.tracehub.interfaces.dto.user.UserQueryRequest;
 import com.pingyu.tracehub.domain.user.entity.User;
 import com.pingyu.tracehub.interfaces.dto.user.UserRegisterRequest;
+import com.pingyu.tracehub.interfaces.dto.user.UserUpdateMyRequest;
 import com.pingyu.tracehub.interfaces.vo.user.LoginUserVO;
 import com.pingyu.tracehub.interfaces.vo.user.UserVO;
 
@@ -101,6 +102,14 @@ public interface UserApplicationService {
     boolean deleteUser(DeleteRequest deleteRequest);
 
     void updateUser(User user);
+
+    /**
+     * 更新个人信息
+     *
+     * @param userUpdateMyRequest
+     * @param request
+     */
+    void updateMyUser(UserUpdateMyRequest userUpdateMyRequest, HttpServletRequest request);
 
     Page<UserVO> listUserVOByPage(UserQueryRequest userQueryRequest);
 

@@ -128,6 +128,19 @@ public class UserController {
     }
 
     /**
+     * 更新个人信息
+     */
+    @PostMapping("/update/my")
+    public BaseResponse<Boolean> updateMyUser(@RequestBody UserUpdateMyRequest userUpdateMyRequest,
+            HttpServletRequest request) {
+        if (userUpdateMyRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        userApplicationService.updateMyUser(userUpdateMyRequest, request);
+        return ResultUtils.success(true);
+    }
+
+    /**
      * 分页获取用户封装列表（仅管理员）
      *
      * @param userQueryRequest 查询请求参数
