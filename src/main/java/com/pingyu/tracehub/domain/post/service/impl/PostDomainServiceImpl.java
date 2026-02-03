@@ -29,6 +29,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StopWatch;
 
 import javax.annotation.Resource;
 import java.util.List;
@@ -122,6 +123,10 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
 
     @Override
     public Page<PostVO> listPostVOByPage(PostQueryRequest postQueryRequest, User loginUser) {
+        // 【StopWatch】启动秒表，开始计时
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
+
         long current = postQueryRequest.getCurrent();
         long size = postQueryRequest.getPageSize();
 
@@ -140,17 +145,20 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
 
         Page<PostVO> postVOPage = null;
 
+        // 用于记录本次查询命中了哪里
+        String hitSource = "DB (Database)";
+
         if (isCacheable) {
             // 1. 查询 L1 (Caffeine)
             postVOPage = caffeineCache.getIfPresent(cacheKey);
             if (postVOPage != null) {
-                log.info("【L1缓存命中】Caffeine: {}", cacheKey);
+                hitSource = "L1 (Caffeine)";
             } else {
                 // 2. 查询 L2 (Redis)
                 ValueOperations<String, String> ops = stringRedisTemplate.opsForValue();
                 String redisData = ops.get(cacheKey);
                 if (StringUtils.isNotBlank(redisData)) {
-                    log.info("【L2缓存命中】Redis: {}", cacheKey);
+                    hitSource = "L2 (Redis)";
                     // 反序列化
                     postVOPage = JSONUtil.toBean(redisData, new TypeReference<Page<PostVO>>() {}, false);
                     // 回填 L1
@@ -162,7 +170,7 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
         // 3. 查询数据库 (DB) - 兜底逻辑
         if (postVOPage == null) {
 
-            // 【新增探针】这里加一行日志，证明打到了数据库
+            // 如果本来应该走缓存但没命中，打印一条日志方便调试
             if (isCacheable) {
                 log.info("【缓存未命中】查询数据库，并准备回填缓存: {}", cacheKey);
             }
@@ -196,6 +204,17 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
         // 5. 如果是从缓存取出的数据，需要针对当前用户填充点赞/收藏状态
         if (isCacheable && loginUser != null && CollUtil.isNotEmpty(postVOPage.getRecords())) {
             fillPostVOState(postVOPage.getRecords(), loginUser);
+        }
+
+        // 【StopWatch】停止计时
+        stopWatch.stop();
+        long costTime = stopWatch.getTotalTimeMillis();
+
+        // 打印带耗时的性能监控日志
+        if (isCacheable) {
+            log.info("【性能监控】查询来源: {}, 耗时: {} ms, Key: {}", hitSource, costTime, cacheKey);
+        } else {
+            log.info("【普通查询】耗时: {} ms", costTime);
         }
 
         return postVOPage;
@@ -300,7 +319,7 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
             } else {
                 // 兜底方案：如果找不到用户，设置一个临时的默认信息，避免前端报错
                 // 也可以直接留空，看前端 UserVO 的处理逻辑
-                 postVO.setUser(null);
+                postVO.setUser(null);
             }
             return postVO;
         }).collect(Collectors.toList());
