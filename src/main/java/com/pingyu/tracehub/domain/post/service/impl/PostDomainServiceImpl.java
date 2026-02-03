@@ -2,9 +2,12 @@ package com.pingyu.tracehub.domain.post.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.json.JSONUtil;
+import cn.hutool.core.lang.TypeReference;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.pingyu.tracehub.application.service.UserApplicationService;
 import com.pingyu.tracehub.domain.post.entity.Post;
 import com.pingyu.tracehub.domain.post.service.PostDomainService;
@@ -20,19 +23,24 @@ import com.pingyu.tracehub.infrastructure.mapper.PostThumbMapper;
 import com.pingyu.tracehub.interfaces.dto.post.PostAddRequest;
 import com.pingyu.tracehub.interfaces.dto.post.PostQueryRequest;
 import com.pingyu.tracehub.interfaces.vo.post.PostVO;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
  * 帖子服务实现
  */
 @Service
+@Slf4j
 public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> implements PostDomainService {
 
     @Resource
@@ -43,6 +51,19 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
 
     @Resource
     private UserApplicationService userApplicationService;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    // -------------------------------------------------------------
+    // 【L1 缓存】Caffeine 本地缓存定义
+    // 容量 100，写入 1 分钟后过期
+    // -------------------------------------------------------------
+    private final Cache<String, Page<PostVO>> caffeineCache = Caffeine.newBuilder()
+            .initialCapacity(10)
+            .maximumSize(100)
+            .expireAfterWrite(1, TimeUnit.MINUTES)
+            .build();
 
     @Override
     public long addPost(PostAddRequest postAddRequest, User loginUser) {
@@ -102,10 +123,82 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
     @Override
     public Page<PostVO> listPostVOByPage(PostQueryRequest postQueryRequest, User loginUser) {
         long current = postQueryRequest.getCurrent();
-        long pageSize = postQueryRequest.getPageSize();
-        Page<Post> postPage = this.page(new Page<>(current, pageSize),
-                getQueryWrapper(postQueryRequest));
-        return getPostVOPage(postPage, loginUser);
+        long size = postQueryRequest.getPageSize();
+
+        // -------------------------------------------------------------
+        // 【多级缓存逻辑开始】
+        // 策略：只缓存"无条件查询"且"前3页"的热点数据
+        // -------------------------------------------------------------
+        boolean isCacheable = StringUtils.isBlank(postQueryRequest.getSearchText())
+                && StringUtils.isBlank(postQueryRequest.getTitle())
+                && StringUtils.isBlank(postQueryRequest.getContent())
+                && postQueryRequest.getUserId() == null
+                && (postQueryRequest.getTags() == null || postQueryRequest.getTags().isEmpty())
+                && current <= 3;
+
+        String cacheKey = "tracehub:post:square:page:" + current;
+
+        Page<PostVO> postVOPage = null;
+
+        if (isCacheable) {
+            // 1. 查询 L1 (Caffeine)
+            postVOPage = caffeineCache.getIfPresent(cacheKey);
+            if (postVOPage != null) {
+                log.info("【L1缓存命中】Caffeine: {}", cacheKey);
+            } else {
+                // 2. 查询 L2 (Redis)
+                ValueOperations<String, String> ops = stringRedisTemplate.opsForValue();
+                String redisData = ops.get(cacheKey);
+                if (StringUtils.isNotBlank(redisData)) {
+                    log.info("【L2缓存命中】Redis: {}", cacheKey);
+                    // 反序列化
+                    postVOPage = JSONUtil.toBean(redisData, new TypeReference<Page<PostVO>>() {}, false);
+                    // 回填 L1
+                    caffeineCache.put(cacheKey, postVOPage);
+                }
+            }
+        }
+
+        // 3. 查询数据库 (DB) - 兜底逻辑
+        if (postVOPage == null) {
+
+            // 【新增探针】这里加一行日志，证明打到了数据库
+            if (isCacheable) {
+                log.info("【缓存未命中】查询数据库，并准备回填缓存: {}", cacheKey);
+            }
+
+            Page<Post> postPage = this.page(new Page<>(current, size),
+                    this.getQueryWrapper(postQueryRequest));
+            // 获取 VO 对象 (传入 null 用户以获取纯净数据用于缓存)
+            postVOPage = this.getPostVOPage(postPage, isCacheable ? null : loginUser);
+
+            // -------------------------------------------------------------
+            // 4. 回填缓存
+            // -------------------------------------------------------------
+            if (isCacheable) {
+                try {
+                    // 序列化
+                    String jsonString = JSONUtil.toJsonStr(postVOPage);
+
+                    // 写入 L2 (Redis): 5分钟 + 随机抖动 (防止雪崩)
+                    int jitter = (int) (Math.random() * 60);
+                    stringRedisTemplate.opsForValue().set(cacheKey, jsonString, 300 + jitter, TimeUnit.SECONDS);
+
+                    // 写入 L1 (Caffeine)
+                    caffeineCache.put(cacheKey, postVOPage);
+
+                } catch (Exception e) {
+                    log.error("【缓存写入失败】", e);
+                }
+            }
+        }
+
+        // 5. 如果是从缓存取出的数据，需要针对当前用户填充点赞/收藏状态
+        if (isCacheable && loginUser != null && CollUtil.isNotEmpty(postVOPage.getRecords())) {
+            fillPostVOState(postVOPage.getRecords(), loginUser);
+        }
+
+        return postVOPage;
     }
 
     @Override
@@ -214,32 +307,42 @@ public class PostDomainServiceImpl extends ServiceImpl<PostMapper, Post> impleme
 
         // 2. 若用户已登录，填充点赞和收藏状态
         if (loginUser != null) {
-            Set<Long> postIdSet = postList.stream().map(Post::getId).collect(Collectors.toSet());
-            Long userId = loginUser.getId();
-
-            // 查询点赞状态
-            QueryWrapper<PostThumb> thumbQueryWrapper = new QueryWrapper<>();
-            thumbQueryWrapper.in("postId", postIdSet);
-            thumbQueryWrapper.eq("userId", userId);
-            List<PostThumb> postThumbList = postThumbMapper.selectList(thumbQueryWrapper);
-            Set<Long> thumbPostIdSet = postThumbList.stream().map(PostThumb::getPostId).collect(Collectors.toSet());
-
-            // 查询收藏状态
-            QueryWrapper<PostFavour> favourQueryWrapper = new QueryWrapper<>();
-            favourQueryWrapper.in("postId", postIdSet);
-            favourQueryWrapper.eq("userId", userId);
-            List<PostFavour> postFavourList = postFavourMapper.selectList(favourQueryWrapper);
-            Set<Long> favourPostIdSet = postFavourList.stream().map(PostFavour::getPostId).collect(Collectors.toSet());
-
-            // 填充状态
-            postVOList.forEach(postVO -> {
-                Long postId = postVO.getId();
-                postVO.setHasThumb(thumbPostIdSet.contains(postId));
-                postVO.setHasFavour(favourPostIdSet.contains(postId));
-            });
+            fillPostVOState(postVOList, loginUser);
         }
         postVOPage.setRecords(postVOList);
         return postVOPage;
+    }
+
+    /**
+     * 填充点赞和收藏状态
+     */
+    private void fillPostVOState(List<PostVO> postVOList, User loginUser) {
+        if (CollUtil.isEmpty(postVOList) || loginUser == null) {
+            return;
+        }
+        Set<Long> postIdSet = postVOList.stream().map(PostVO::getId).collect(Collectors.toSet());
+        Long userId = loginUser.getId();
+
+        // 查询点赞状态
+        QueryWrapper<PostThumb> thumbQueryWrapper = new QueryWrapper<>();
+        thumbQueryWrapper.in("postId", postIdSet);
+        thumbQueryWrapper.eq("userId", userId);
+        List<PostThumb> postThumbList = postThumbMapper.selectList(thumbQueryWrapper);
+        Set<Long> thumbPostIdSet = postThumbList.stream().map(PostThumb::getPostId).collect(Collectors.toSet());
+
+        // 查询收藏状态
+        QueryWrapper<PostFavour> favourQueryWrapper = new QueryWrapper<>();
+        favourQueryWrapper.in("postId", postIdSet);
+        favourQueryWrapper.eq("userId", userId);
+        List<PostFavour> postFavourList = postFavourMapper.selectList(favourQueryWrapper);
+        Set<Long> favourPostIdSet = postFavourList.stream().map(PostFavour::getPostId).collect(Collectors.toSet());
+
+        // 填充状态
+        postVOList.forEach(postVO -> {
+            Long postId = postVO.getId();
+            postVO.setHasThumb(thumbPostIdSet.contains(postId));
+            postVO.setHasFavour(favourPostIdSet.contains(postId));
+        });
     }
 
     /**
