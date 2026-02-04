@@ -27,7 +27,7 @@ public class AiManager {
     public String doChat(String systemMessage, String userMessage) {
         Generation gen = new Generation();
         List<Message> messages = new ArrayList<>();
-
+        
         // 构造消息
         Message sysMsg = Message.builder()
                 .role(Role.SYSTEM.getValue())
@@ -48,16 +48,8 @@ public class AiManager {
                 .build();
 
         try {
-            // 【日志埋点】记录请求内容（便于调试 Prompt 效果）
-            log.info("【AI 请求】发送消息给 Qwen-Plus, UserMessage: {}", userMessage);
-
             GenerationResult result = gen.call(param);
-            String content = result.getOutput().getChoices().get(0).getMessage().getContent();
-
-            // 【日志埋点】记录响应内容（便于排查 JSON 格式问题）
-            log.info("【AI 响应】调用成功, 响应内容: {}", content);
-
-            return content;
+            return result.getOutput().getChoices().get(0).getMessage().getContent();
         } catch (Exception e) {
             log.error("AI 调用失败", e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 服务异常");
