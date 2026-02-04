@@ -2,6 +2,7 @@ package com.pingyu.tracehub.interfaces.controller;
 
 import cn.hutool.core.util.ObjectUtil;
 import com.pingyu.tracehub.domain.space.entity.Space;
+import com.pingyu.tracehub.domain.space.valueobject.SpaceRoleEnum;
 import com.pingyu.tracehub.infrastructure.common.BaseResponse;
 import com.pingyu.tracehub.infrastructure.common.DeleteRequest;
 import com.pingyu.tracehub.infrastructure.common.ResultUtils;
@@ -70,20 +71,40 @@ public class SpaceUserController {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         long id = deleteRequest.getId();
-        // 判断是否存在
-        SpaceUser oldSpaceUser = spaceUserApplicationService.getById(id);
-        ThrowUtils.throwIf(oldSpaceUser == null, ErrorCode.NOT_FOUND_ERROR);
+        // 1. 判断待删除的记录是否存在
+        SpaceUser targetUser = spaceUserApplicationService.getById(id);
+        ThrowUtils.throwIf(targetUser == null, ErrorCode.NOT_FOUND_ERROR);
 
-        // ================= 【核心修复 2：防止移除创建者】 =================
-        // 获取当前关联的空间信息
-        Space space = spaceApplicationService.getById(oldSpaceUser.getSpaceId());
+        // 2. 获取当前关联的空间信息
+        Space space = spaceApplicationService.getById(targetUser.getSpaceId());
         ThrowUtils.throwIf(space == null, ErrorCode.NOT_FOUND_ERROR);
 
-        // 校验：如果要删除的用户 ID 等于空间创建者 ID，则禁止删除
-        if (space.getUserId().equals(oldSpaceUser.getUserId())) {
+        // ================= 【权限防御体系升级】 =================
+
+        // 3. 【防止移除创建者】(之前的逻辑)
+        if (space.getUserId().equals(targetUser.getUserId())) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无法移除空间创建者！");
         }
-        // ============================================================
+
+        // 4. 【防止管理员内战】(新增逻辑)
+        // 获取当前操作者的信息
+        User loginUser = userApplicationService.getLoginUser(request);
+
+        // 查询操作者在这个空间的角色
+        SpaceUserQueryRequest queryRequest = new SpaceUserQueryRequest();
+        queryRequest.setUserId(loginUser.getId());
+        queryRequest.setSpaceId(space.getId());
+        SpaceUser operator = spaceUserApplicationService.getOne(spaceUserApplicationService.getQueryWrapper(queryRequest));
+
+        // 核心校验逻辑：
+        // 如果操作者存在，且不是空间创建者（说明操作者只是个普通管理员）
+        if (operator != null && !space.getUserId().equals(operator.getUserId())) {
+            // 此时，如果目标用户也是管理员
+            if (SpaceRoleEnum.ADMIN.getValue().equals(targetUser.getSpaceRole())) {
+                throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "管理员无法移除其他管理员！");
+            }
+        }
+        // =======================================================
 
         // 操作数据库
         boolean result = spaceUserApplicationService.removeById(id);
@@ -136,22 +157,39 @@ public class SpaceUserController {
         SpaceUser spaceUser = SpaceUserAssembler.toSpaceUserEntity(spaceUserEditRequest);
         // 数据校验
         spaceUserApplicationService.validSpaceUser(spaceUser, false);
-        // 判断是否存在
+        // 判断目标是否存在
         long id = spaceUserEditRequest.getId();
-        SpaceUser oldSpaceUser = spaceUserApplicationService.getById(id);
-        ThrowUtils.throwIf(oldSpaceUser == null, ErrorCode.NOT_FOUND_ERROR);
+        SpaceUser targetUser = spaceUserApplicationService.getById(id);
+        ThrowUtils.throwIf(targetUser == null, ErrorCode.NOT_FOUND_ERROR);
 
-        // ================= 【核心修复 3：防止“兵变”逻辑】 =================
         // 获取当前关联的空间信息
-        // 这里的 spaceApplicationService 现在已经修复了大小写问题，不会报错了
-        Space space = spaceApplicationService.getById(oldSpaceUser.getSpaceId());
+        Space space = spaceApplicationService.getById(targetUser.getSpaceId());
         ThrowUtils.throwIf(space == null, ErrorCode.NOT_FOUND_ERROR);
 
-        // 校验：如果被修改的用户 ID 等于空间创建者 ID，则禁止修改
-        if (space.getUserId().equals(oldSpaceUser.getUserId())) {
+        // ================= 【权限防御升级】 =================
+
+        // 1. 【防止兵变】无论谁，都不能动空间创建者
+        if (space.getUserId().equals(targetUser.getUserId())) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权修改空间创建者的权限！");
         }
-        // ============================================================
+
+        // 2. 【防止管理员内战】普通管理员不能动其他管理员
+        User loginUser = userApplicationService.getLoginUser(request);
+        // 查询当前操作者在这个空间的角色
+        SpaceUserQueryRequest queryRequest = new SpaceUserQueryRequest();
+        queryRequest.setUserId(loginUser.getId());
+        queryRequest.setSpaceId(space.getId());
+        SpaceUser operator = spaceUserApplicationService.getOne(spaceUserApplicationService.getQueryWrapper(queryRequest));
+
+        // 如果操作者存在，且不是空间创建者（即只是普通管理员）
+        if (operator != null && !space.getUserId().equals(operator.getUserId())) {
+            // 如果目标用户也是管理员，且不是操作者自己
+            if (SpaceRoleEnum.ADMIN.getValue().equals(targetUser.getSpaceRole())
+                    && !targetUser.getUserId().equals(operator.getUserId())) {
+                throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "管理员无法修改其他管理员的权限！");
+            }
+        }
+        // ===================================================
 
         // 操作数据库
         boolean result = spaceUserApplicationService.updateById(spaceUser);
