@@ -5,7 +5,10 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.pingyu.tracehub.domain.picture.entity.Picture;
+import com.pingyu.tracehub.domain.picture.service.PictureDomainService;
 import com.pingyu.tracehub.domain.space.service.SpaceDomainService;
+import com.pingyu.tracehub.domain.space.service.SpaceUserDomainService;
 import com.pingyu.tracehub.infrastructure.exception.BusinessException;
 import com.pingyu.tracehub.infrastructure.exception.ErrorCode;
 import com.pingyu.tracehub.infrastructure.exception.ThrowUtils;
@@ -24,8 +27,9 @@ import com.pingyu.tracehub.infrastructure.mapper.SpaceMapper;
 import com.pingyu.tracehub.application.service.SpaceUserApplicationService;
 import com.pingyu.tracehub.application.service.UserApplicationService;
 import org.springframework.beans.BeanUtils;
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Lazy; // 🌟 引入 Lazy 注解
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.annotation.Resource;
@@ -40,7 +44,7 @@ import java.util.stream.Collectors;
  */
 @Service
 public class SpaceApplicationServiceImpl extends ServiceImpl<SpaceMapper, Space>
-        implements SpaceApplicationService {
+        implements SpaceApplicationService { // 🌟 修复点1：补全了类名
 
     @Resource
     private SpaceDomainService spaceDomainService;
@@ -51,9 +55,20 @@ public class SpaceApplicationServiceImpl extends ServiceImpl<SpaceMapper, Space>
     @Resource
     private SpaceUserApplicationService spaceUserApplicationService;
 
+    // 【新增】注入 SpaceUserDomainService 用于删除关联数据
+    @Resource
+    private SpaceUserDomainService spaceUserDomainService;
+
+    // 【新增】注入 PictureDomainService 用于删除关联图片
+    // 🌟 修复点2：添加 @Lazy 解决循环依赖死锁
+    @Resource
+    @Lazy
+    private PictureDomainService pictureDomainService;
+
     @Resource
     private TransactionTemplate transactionTemplate;
-    @Qualifier("spaceDomainService")
+
+    // 🌟 修复点3：删除了悬空且无用的 @Qualifier("spaceDomainService")
 
     // 为了方便部署，注释掉分表
 //    @Resource
@@ -182,6 +197,24 @@ public class SpaceApplicationServiceImpl extends ServiceImpl<SpaceMapper, Space>
     public void checkSpaceAuth(User loginUser, Space space) {
         spaceDomainService.checkSpaceAuth(loginUser, space);
     }
+
+    /**
+     * 级联删除空间（解散空间）
+     * 核心逻辑：事务回滚 + 级联清理（图片、成员、空间）
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class) // 开启事务
+    public void deleteSpace(Space space) {
+        // 1. 清理该空间下的所有图片
+        pictureDomainService.remove(new QueryWrapper<Picture>().eq("spaceId", space.getId()));
+
+        // 2. 清理该空间下的所有成员关系
+        spaceUserDomainService.remove(new QueryWrapper<SpaceUser>().eq("spaceId", space.getId()));
+
+        // 3. 删除空间本身
+        boolean result = this.removeById(space.getId());
+        if (!result) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "空间删除失败");
+        }
+    }
 }
-
-

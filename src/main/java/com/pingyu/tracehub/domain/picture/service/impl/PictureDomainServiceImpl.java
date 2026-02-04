@@ -10,6 +10,7 @@ import com.pingyu.tracehub.domain.picture.entity.Picture;
 import com.pingyu.tracehub.domain.picture.repository.PictureRepository;
 import com.pingyu.tracehub.domain.picture.service.PictureDomainService;
 import com.pingyu.tracehub.domain.picture.valueobject.PictureReviewStatusEnum;
+import com.pingyu.tracehub.domain.space.service.SpaceUserDomainService;
 import com.pingyu.tracehub.domain.user.entity.User;
 import com.pingyu.tracehub.infrastructure.api.CosManager;
 import com.pingyu.tracehub.infrastructure.api.aliyunai.AliYunAiApi;
@@ -18,6 +19,7 @@ import com.pingyu.tracehub.infrastructure.api.aliyunai.model.CreateOutPaintingTa
 import com.pingyu.tracehub.infrastructure.exception.BusinessException;
 import com.pingyu.tracehub.infrastructure.exception.ErrorCode;
 import com.pingyu.tracehub.infrastructure.exception.ThrowUtils;
+import com.pingyu.tracehub.infrastructure.mapper.PictureMapper;
 import com.pingyu.tracehub.infrastructure.utils.ColorSimilarUtils;
 import com.pingyu.tracehub.infrastructure.utils.ColorTransformUtils;
 import com.pingyu.tracehub.interfaces.dto.picture.*;
@@ -45,11 +47,7 @@ import java.util.List;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * @author 程序员鱼皮 <a href="https://www.codefather.cn">编程导航原创项目</a>
- * @description 针对表【picture(图片)】的数据库操作Service实现
- * @createDate 2024-12-11 20:45:51
- */
+
 @Slf4j
 @Service
 public class PictureDomainServiceImpl
@@ -75,6 +73,23 @@ public class PictureDomainServiceImpl
 
     @Resource
     private AliYunAiApi aliYunAiApi;
+
+    @Resource
+    private PictureMapper pictureMapper;
+
+    /**
+     * 【新增实现】根据条件删除图片记录
+     * 核心逻辑：直接调用底层 Mapper 执行条件删除。
+     * 场景：主要用于空间解散时清理所有空间关联的图片资产。
+     *
+     * @param queryWrapper 删除条件包装类
+     * @return 是否成功（影响行数 >= 0 视为逻辑执行成功）
+     */
+    @Override
+    public boolean remove(QueryWrapper<Picture> queryWrapper) {
+        // 调用 MyBatis-Plus Mapper 层的删除方法
+        return pictureMapper.delete(queryWrapper) >= 0;
+    }
 
     @Override
     public PictureVO uploadPicture(Object inputSource, PictureUploadRequest pictureUploadRequest, User loginUser) {

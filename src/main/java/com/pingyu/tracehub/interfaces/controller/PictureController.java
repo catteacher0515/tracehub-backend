@@ -48,9 +48,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-/**
- * @author 程序员鱼皮 <a href="https://www.codefather.cn">编程导航原创项目</a>
- */
 @Slf4j
 @RestController
 @RequestMapping("/picture")

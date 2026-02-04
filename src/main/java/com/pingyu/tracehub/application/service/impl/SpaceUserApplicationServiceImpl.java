@@ -52,14 +52,31 @@ public class SpaceUserApplicationServiceImpl extends ServiceImpl<SpaceUserMapper
     @Lazy
     private SpaceApplicationService spaceApplicationService;
 
+    /**
+     * 添加团队空间成员
+     * @param spaceUserAddRequest
+     * @return
+     */
     @Override
     public long addSpaceUser(SpaceUserAddRequest spaceUserAddRequest) {
-        // 参数校验
+        // 1. 参数校验
         ThrowUtils.throwIf(spaceUserAddRequest == null, ErrorCode.PARAMS_ERROR);
         SpaceUser spaceUser = new SpaceUser();
         BeanUtils.copyProperties(spaceUserAddRequest, spaceUser);
         validSpaceUser(spaceUser, true);
-        // 数据库操作
+
+        // 🕵️‍♂️【新增防线】校验成员是否已存在
+        // 防止违反数据库唯一约束 (uk_spaceId_userId) 导致的报错
+        boolean hasUser = this.lambdaQuery()
+                .eq(SpaceUser::getSpaceId, spaceUser.getSpaceId())
+                .eq(SpaceUser::getUserId, spaceUser.getUserId())
+                .exists();
+
+        if (hasUser) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "该用户已经是空间成员");
+        }
+
+        // 2. 数据库操作
         boolean result = this.save(spaceUser);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         return spaceUser.getId();

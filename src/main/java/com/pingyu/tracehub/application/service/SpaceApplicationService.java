@@ -67,4 +67,12 @@ public interface SpaceApplicationService extends IService<Space> {
      * @param space
      */
     void checkSpaceAuth(User loginUser, Space space);
+
+    /**
+     * 级联删除空间（解散空间）
+     * 删除空间本身 + 关联的成员 + 关联的图片
+     *
+     * @param space
+     */
+    void deleteSpace(Space space);
 }

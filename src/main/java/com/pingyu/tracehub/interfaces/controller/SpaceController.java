@@ -1,6 +1,9 @@
 package com.pingyu.tracehub.interfaces.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.pingyu.tracehub.domain.picture.service.PictureDomainService;
+import com.pingyu.tracehub.domain.space.service.SpaceUserDomainService;
+import com.pingyu.tracehub.domain.space.valueobject.SpaceTypeEnum;
 import com.pingyu.tracehub.infrastructure.annotation.AuthCheck;
 import com.pingyu.tracehub.infrastructure.common.BaseResponse;
 import com.pingyu.tracehub.infrastructure.common.DeleteRequest;
@@ -28,9 +31,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/**
- * @author 程序员鱼皮 <a href="https://www.codefather.cn">编程导航原创项目</a>
- */
 @Slf4j
 @RestController
 @RequestMapping("/space")
@@ -45,6 +45,7 @@ public class SpaceController {
     @Resource
     private SpaceUserAuthManager spaceUserAuthManager;
 
+
     @PostMapping("/add")
     public BaseResponse<Long> addSpace(@RequestBody SpaceAddRequest spaceAddRequest, HttpServletRequest request) {
         ThrowUtils.throwIf(spaceAddRequest == null, ErrorCode.PARAMS_ERROR);
@@ -53,6 +54,10 @@ public class SpaceController {
         return ResultUtils.success(newId);
     }
 
+    /**
+     * 删除空间（若为团队空间，则为解散）
+     * 升级：支持级联删除，并严格校验团队空间解散权限
+     */
     @PostMapping("/delete")
     public BaseResponse<Boolean> deleteSpace(@RequestBody DeleteRequest deleteRequest
             , HttpServletRequest request) {
@@ -61,14 +66,25 @@ public class SpaceController {
         }
         User loginUser = userApplicationService.getLoginUser(request);
         Long id = deleteRequest.getId();
-        // 判断是否存在
+
+        // 1. 判断空间是否存在
         Space oldSpace = spaceApplicationService.getById(id);
         ThrowUtils.throwIf(oldSpace == null, ErrorCode.NOT_FOUND_ERROR);
-        // 仅本人或者管理员可删除
+
+        // 2. 基础权限校验 (本人或管理员)
         spaceApplicationService.checkSpaceAuth(loginUser, oldSpace);
-        // 操作数据库
-        boolean result = spaceApplicationService.removeById(id);
-        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+
+        // 3. 【核心防御】如果是团队空间，且当前操作人不是创建者本人，禁止解散
+        // 防止被授权为管理员的其他用户误删整个公司
+        if (SpaceTypeEnum.TEAM.getValue() == oldSpace.getSpaceType()) {
+            if (!oldSpace.getUserId().equals(loginUser.getId())) {
+                throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "只有团队创建者才有权解散空间！");
+            }
+        }
+
+        // 4. 执行级联删除 (调用 Service 层新写的级联方法)
+        spaceApplicationService.deleteSpace(oldSpace);
+
         return ResultUtils.success(true);
     }
 

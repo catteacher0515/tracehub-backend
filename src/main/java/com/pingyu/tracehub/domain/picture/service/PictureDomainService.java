@@ -36,7 +36,6 @@ public interface PictureDomainService {
      */
     QueryWrapper<Picture> getQueryWrapper(PictureQueryRequest pictureQueryRequest);
 
-
     /**
      * 图片审核
      *
@@ -119,4 +118,13 @@ public interface PictureDomainService {
      * @param loginUser
      */
     CreateOutPaintingTaskResponse createPictureOutPaintingTask(CreatePictureOutPaintingTaskRequest createPictureOutPaintingTaskRequest, User loginUser);
+
+    /**
+     * 【新增】级联删除图片
+     * 用于空间解散时清理所有关联图片记录
+     *
+     * @param queryWrapper 查询条件
+     * @return 是否删除成功
+     */
+    boolean remove(QueryWrapper<Picture> queryWrapper);
 }
