@@ -131,12 +131,35 @@ public class SpaceUserController {
 
     /**
      * 查询成员信息列表
+     * 修改说明：移除了 @SaSpaceCheckPermission 注解，改为校验“是否为空间成员”。
+     * 这样“浏览者”和“编辑者”也能看到列表，从而进行“退出空间”操作。
      */
     @PostMapping("/list")
-    @SaSpaceCheckPermission(value = SpaceUserPermissionConstant.SPACE_USER_MANAGE)
+    // 1. 【核心修改】移除管理员权限注解，让所有人都能调通这个接口
+    // @SaSpaceCheckPermission(value = SpaceUserPermissionConstant.SPACE_USER_MANAGE)
     public BaseResponse<List<SpaceUserVO>> listSpaceUser(@RequestBody SpaceUserQueryRequest spaceUserQueryRequest,
                                                          HttpServletRequest request) {
         ThrowUtils.throwIf(spaceUserQueryRequest == null, ErrorCode.PARAMS_ERROR);
+        Long spaceId = spaceUserQueryRequest.getSpaceId();
+        if (spaceId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        // 2. 【核心修改】新增鉴权逻辑：判断当前登录用户是否在该空间中
+        User loginUser = userApplicationService.getLoginUser(request);
+
+        // 构造查询条件：查一下当前用户在这个空间有没有记录
+        SpaceUserQueryRequest queryRequest = new SpaceUserQueryRequest();
+        queryRequest.setUserId(loginUser.getId());
+        queryRequest.setSpaceId(spaceId);
+        SpaceUser self = spaceUserApplicationService.getOne(spaceUserApplicationService.getQueryWrapper(queryRequest));
+
+        // 如果查不到记录，说明不是该空间成员，拒绝访问
+        if (self == null) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "非本空间成员，无权查看列表");
+        }
+
+        // 3. 权限校验通过，执行原有的列表查询
         List<SpaceUser> spaceUserList = spaceUserApplicationService.list(
                 spaceUserApplicationService.getQueryWrapper(spaceUserQueryRequest)
         );
@@ -209,5 +232,40 @@ public class SpaceUserController {
                 spaceUserApplicationService.getQueryWrapper(spaceUserQueryRequest)
         );
         return ResultUtils.success(spaceUserApplicationService.getSpaceUserVOList(spaceUserList));
+    }
+
+    /**
+     * 【新增】主动退出团队空间
+     * 不需要管理员权限，但必须校验操作对象是否是本人
+     */
+
+    @PostMapping("/quit")
+    public BaseResponse<Boolean> quitTeamSpace(@RequestBody DeleteRequest deleteRequest,
+                                               HttpServletRequest request) {
+        if (deleteRequest == null || deleteRequest.getId() <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        long spaceUserId = deleteRequest.getId();
+        SpaceUser spaceUser = spaceUserApplicationService.getById(spaceUserId);
+        ThrowUtils.throwIf(spaceUser == null, ErrorCode.NOT_FOUND_ERROR);
+
+        // 获取当前登录用户
+        User loginUser = userApplicationService.getLoginUser(request);
+
+        // 1. 校验权限：只能退出自己的
+        if (!spaceUser.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "只能退出自己加入的团队！");
+        }
+
+        // 2. 校验特殊身份：创建者不能退出，只能解散
+        Space space = spaceApplicationService.getById(spaceUser.getSpaceId());
+        if (space != null && space.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "你是空间创建者，不能退出，只能解散空间！");
+        }
+
+        // 操作数据库
+        boolean result = spaceUserApplicationService.removeById(spaceUserId);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        return ResultUtils.success(true);
     }
 }
